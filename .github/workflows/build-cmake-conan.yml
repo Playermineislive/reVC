@@ -1,117 +1,57 @@
-name: reVC conan+cmake
+name: Build reVC (Linux Deluxe Edition)
+
 on:
-  pull_request:
+  workflow_dispatch:      # Adds the "Run Workflow" button
   push:
-  release:
-    types: published
+    branches: [ miami ]   # Runs automatically
+
 jobs:
-  build-cmake:
-    strategy:
-      matrix:
-        include:
-          - os: 'windows-latest'
-            platform: 'gl3'
-            gl3_gfxlib: 'glfw'
-            audio: 'openal'
-#          - os: 'windows-latest'
-#            platform: 'gl3'
-#            gl3_gfxlib: 'sdl2'
-#            audio: 'openal'
-          - os: 'windows-latest'
-            platform: 'd3d9'
-            audio: 'openal'
-#          - os: 'windows-latest'
-#            platform: 'd3d9'
-#            audio: 'miles'
-          - os: 'ubuntu-18.04'
-            platform: 'gl3'
-            gl3_gfxlib: 'glfw'
-            audio: 'openal'
-#          - os: 'ubuntu-18.04'
-#            platform: 'gl3'
-#            gl3_gfxlib: 'sdl2'
-#            audio: 'openal'
-          - os: 'macos-latest'
-            platform: 'gl3'
-            gl3_gfxlib: 'glfw'
-            audio: 'openal'
-#          - os: 'macos-latest'
-#            platform: 'gl3'
-#            gl3_gfxlib: 'sdl2'
-#            audio: 'openal'
-    runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.platform == 'ps2' || matrix.gl3_gfxlib == 'sdl2' || matrix.audio == 'miles' }}
+  build-linux:
+    runs-on: ubuntu-latest
+    
     steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-      - name: "Checkout Miles SDK Import Library project"
-        uses: actions/checkout@v4
-        if: ${{ matrix.audio == 'miles' }}
-        with:
-          repository: 'withmorten/re3mss'
-          path: 're3mss'
-      - uses: actions/setup-python@v2
-        with:
-          python-version: '3.x'
-      - name: "Use XCode 11 as default (conan-center-index does not provide XCode 12 binaries at the moment)"
-        if: startsWith(matrix.os, 'macos')
-        run: |
-          sudo xcode-select --switch /Applications/Xcode_11.7.app
-      - name: "Setup conan"
-        run: |
-          python -m pip install conan
-          conan config init
-          conan config set log.print_run_commands=True
-          conan config set general.revisions_enabled=1
-          conan remote add bincrafters https://bincrafters.jfrog.io/artifactory/api/conan/public-conan
-#          conan remote add madebr_ps2dev https://api.bintray.com/conan/madebr/ps2dev
-      - name: "Add os=playstation2 + gcc.version=3.2 to .conan/settings.yml"
-        shell: python
-        run: |
-          import os, yaml
-          settings_path = os.path.expanduser("~/.conan/settings.yml")
-          yml = yaml.safe_load(open(settings_path))
-          yml["os"]["playstation2"] = None
-          yml["compiler"]["gcc"]["version"].append("3.2")
-          yml["compiler"]["gcc"]["version"].sort()
-          yaml.safe_dump(yml, open(settings_path, "w"))
-      - name: "Create host profile"
-        shell: bash
-        run: |
-          if test "${{ matrix.platform }}" = "ps2"; then
-            cp vendor/librw/conan/playstation2 host_profile
-          else
-            cp ~/.conan/profiles/default host_profile
-          fi
-      - name: "Export Playstation 2 CMake toolchain conan recipe"
-        run: |
-          conan export vendor/librw/cmake/ps2/cmaketoolchain ps2dev-cmaketoolchain/master@
-      - name: "Export librw conan recipe"
-        run: |
-          conan export vendor/librw librw/master@
-      - name: "Export Miles SDK conan recipe"
-        if: ${{ matrix.audio == 'miles' }}
-        run: |
-          conan export re3mss miles-sdk/master@
-      - name: "Download/build dependencies (conan install)"
-        run: |
-          conan install ${{ github.workspace }} reVC/master@ -if build -o reVC:audio=${{ matrix.audio }} -o librw:platform=${{ matrix.platform }} -o librw:gl3_gfxlib=${{ matrix.gl3_gfxlib || 'glfw' }} --build missing -pr:h ./host_profile -pr:b default -s reVC:build_type=RelWithDebInfo -s librw:build_type=RelWithDebInfo
-        env:
-          CONAN_SYSREQUIRES_MODE: enabled
-      - name: "Build reVC (conan build)"
-        run: |
-          conan build ${{ github.workspace }} -if build -bf build -pf package
-      - name: "Package reVC (conan package)"
-        run: |
-          conan package ${{ github.workspace }} -if build -bf build -pf package
-      - name: "Create binary package (cpack)"
-        working-directory: ./build
-        run: |
-          cpack -C RelWithDebInfo
-      - name: "Archive binary package (github artifacts)"
-        uses: actions/upload-artifact@v4
-        with:
-          name: "${{ matrix.os }}-${{ matrix.platform }}"
-          path: build/*.tar.xz
-          if-no-files-found: error
+    - uses: actions/checkout@v3
+      with:
+        submodules: recursive
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential cmake libopenal-dev libsndfile1-dev libmpg123-dev libglfw3-dev
+
+    # --- THE PATCH SECTION (This makes it "Deluxe") ---
+    - name: Apply Deluxe Mod Limit Fixes
+      run: |
+        # 1. Rename existing lists to avoid conflicts
+        sed -i 's/\bNUMHANDLINGS\b/NUMHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
+        sed -i 's/\bNUMBIKEHANDLINGS\b/NUMBIKEHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
+        sed -i 's/\bNUMFLYINGHANDLINGS\b/NUMFLYINGHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
+        sed -i 's/\bNUMBOATHANDLINGS\b/NUMBOATHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
+        
+        # 2. Inject the DELUXE Limits (500 Cars, 5000 Lights)
+        sed -i '1i #define NUMHANDLINGS 500' src/vehicles/HandlingMgr.h
+        sed -i '1i #define NUMBIKEHANDLINGS 13' src/vehicles/HandlingMgr.h
+        sed -i '1i #define NUMFLYINGHANDLINGS 4' src/vehicles/HandlingMgr.h
+        sed -i '1i #define NUMBOATHANDLINGS 5' src/vehicles/HandlingMgr.h
+
+        # 3. Fix the "385 Error" (Lights)
+        grep -rl "TIMEMODELSIZE" src/ | xargs sed -i 's/385/5000/g'
+
+        # 4. Fix the "Directory Error" (File Limit)
+        sed -i 's/entries = new DirectoryInfo\[maxEntries\];/if (maxEntries < 50000) maxEntries = 50000; entries = new DirectoryInfo[maxEntries];/' src/core/Directory.cpp
+
+    # --- BUILD SECTION ---
+    - name: Compile reVC (Linux)
+      run: |
+        mkdir build
+        cd build
+        # We enforce GL3/GLFW to ensure it runs on modern Linux/Android-Linux setups
+        cmake -DGTAVC=ON -DLIBRW_PLATFORM=GL3 -DGL3_GFXLIB=GLFW -DCMAKE_BUILD_TYPE=Release ..
+        make -j4
+
+    - name: Upload Game File
+      uses: actions/upload-artifact@v4
+      with:
+        name: reVC-Linux-Deluxe
+        path: build/reVC
+        
