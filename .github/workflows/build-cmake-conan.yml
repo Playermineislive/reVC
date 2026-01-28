@@ -22,8 +22,6 @@ jobs:
     - name: Apply Deluxe Mod Fixes
       run: |
         # --- FIX 1: The Semaphore Fix (Variadic Version) ---
-        # We define RE3_SEM_OPEN using GCC tricks (##__VA_ARGS__) to accept 1 OR 2 arguments.
-        # This fixes the "passed 2 arguments" error.
         sed -i '1i #include <semaphore.h>\n#include <fcntl.h>\n#include <stdio.h>\n#define RE3_SEM_OPEN(fmt, ...) ({ char buf[128]; snprintf(buf, 128, fmt, ##__VA_ARGS__); sem_open(buf, O_CREAT, 0644, 0); })\n#define RE3_SEM_CLOSE(sem, ...) { sem_close(sem); char buf[128]; snprintf(buf, 128, __VA_ARGS__); sem_unlink(buf); }' src/core/CdStream_posix.cpp
 
         # --- FIX 2: Rename Conflicting Enums ---
@@ -43,6 +41,12 @@ jobs:
 
         # --- FIX 5: Fix the "Directory Error" (File Limit) ---
         sed -i 's/entries = new DirectoryInfo\[maxEntries\];/if (maxEntries < 50000) maxEntries = 50000; entries = new DirectoryInfo[maxEntries];/' src/core/Directory.cpp
+
+        # --- FIX 6: The GLFW Controller Fix (Fixes your 92% Error) ---
+        # We replace the direct assignment "=" with "memcpy()" so the compiler accepts it.
+        # We also add <cstring> to the top to ensure memcpy works.
+        sed -i '1i #include <cstring>' src/skel/glfw/glfw.cpp
+        sed -i 's/ControlsManager.m_NewState.buttons = (uint8\*)buttons;/memcpy(ControlsManager.m_NewState.buttons, buttons, sizeof(ControlsManager.m_NewState.buttons));/' src/skel/glfw/glfw.cpp
 
     - name: Compile reVC (Linux)
       run: |
