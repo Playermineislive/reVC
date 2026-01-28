@@ -21,10 +21,10 @@ jobs:
 
     - name: Apply Deluxe Mod Fixes
       run: |
-        # --- FIX 1: The New Semaphore Fix (Solves your current error) ---
-        # We inject the missing macros and includes directly at the top of CdStream_posix.cpp
-        # This defines RE3_SEM_OPEN and RE3_SEM_CLOSE so the compiler stops complaining.
-        sed -i '1i #include <semaphore.h>\n#include <fcntl.h>\n#include <stdio.h>\n#define RE3_SEM_OPEN(name) sem_open(name, O_CREAT, 0644, 0)\n#define RE3_SEM_CLOSE(sem, ...) { sem_close(sem); char buf[100]; snprintf(buf, 100, __VA_ARGS__); sem_unlink(buf); }' src/core/CdStream_posix.cpp
+        # --- FIX 1: The Semaphore Fix (Variadic Version) ---
+        # We define RE3_SEM_OPEN using GCC tricks (##__VA_ARGS__) to accept 1 OR 2 arguments.
+        # This fixes the "passed 2 arguments" error.
+        sed -i '1i #include <semaphore.h>\n#include <fcntl.h>\n#include <stdio.h>\n#define RE3_SEM_OPEN(fmt, ...) ({ char buf[128]; snprintf(buf, 128, fmt, ##__VA_ARGS__); sem_open(buf, O_CREAT, 0644, 0); })\n#define RE3_SEM_CLOSE(sem, ...) { sem_close(sem); char buf[128]; snprintf(buf, 128, __VA_ARGS__); sem_unlink(buf); }' src/core/CdStream_posix.cpp
 
         # --- FIX 2: Rename Conflicting Enums ---
         sed -i 's/\bNUMHANDLINGS\b/NUMHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
@@ -48,7 +48,6 @@ jobs:
       run: |
         mkdir build
         cd build
-        # We use GL3/GLFW which is standard for Linux
         cmake -DGTAVC=ON -DLIBRW_PLATFORM=GL3 -DGL3_GFXLIB=GLFW -DCMAKE_BUILD_TYPE=Release ..
         make -j4
 
