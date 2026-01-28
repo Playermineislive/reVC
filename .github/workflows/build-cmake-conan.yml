@@ -6,7 +6,7 @@ on:
     branches: [ miami ]   # Runs automatically
 
 jobs:
-  # --- JOB 1: LINUX DELUXE ---
+  # --- JOB 1: LINUX DELUXE (Standard) ---
   build-linux:
     runs-on: ubuntu-latest
     steps:
@@ -21,10 +21,10 @@ jobs:
 
     - name: Apply Linux Deluxe Fixes
       run: |
-        # 1. Semaphore Fix (Specific to Linux compilation)
+        # 1. Semaphore Fix (Specific to Linux)
         sed -i '1i #include <semaphore.h>\n#include <fcntl.h>\n#include <stdio.h>\n#define RE3_SEM_OPEN(fmt, ...) ({ char buf[128]; snprintf(buf, 128, fmt, ##__VA_ARGS__); sem_open(buf, O_CREAT, 0644, 0); })\n#define RE3_SEM_CLOSE(sem, ...) { sem_close(sem); char buf[128]; snprintf(buf, 128, __VA_ARGS__); sem_unlink(buf); }' src/core/CdStream_posix.cpp
 
-        # 2. GLFW Controller Fix (Specific to Linux compilation)
+        # 2. GLFW Controller Fix (Specific to Linux)
         sed -i '1i #include <cstring>' src/skel/glfw/glfw.cpp
         sed -i 's/ControlsManager.m_NewState.buttons = (uint8\*)buttons;/memcpy(ControlsManager.m_NewState.buttons, buttons, sizeof(ControlsManager.m_NewState.buttons));/' src/skel/glfw/glfw.cpp
 
@@ -57,7 +57,7 @@ jobs:
         name: reVC-Linux-Deluxe
         path: build/src/reVC
 
-  # --- JOB 2: WINDOWS DELUXE ---
+  # --- JOB 2: WINDOWS DELUXE (With OpenAL Fix) ---
   build-windows:
     runs-on: windows-latest
     steps:
@@ -84,11 +84,20 @@ jobs:
         grep -rl "TIMEMODELSIZE" src/ | xargs sed -i 's/385/5000/g'
         sed -i 's/entries = new DirectoryInfo\[maxEntries\];/if (maxEntries < 50000) maxEntries = 50000; entries = new DirectoryInfo[maxEntries];/' src/core/Directory.cpp
 
+    # --- NEW STEP: Install OpenAL for Windows ---
+    - name: Install OpenAL (Windows)
+      shell: powershell
+      run: |
+        Invoke-WebRequest -Uri "https://openal-soft.org/openal-binaries/openal-soft-1.23.1-bin.zip" -OutFile "openal.zip"
+        Expand-Archive openal.zip -DestinationPath .
+        Move-Item -Path "openal-soft-1.23.1-bin" -Destination "openal"
+
     - name: Configure CMake (Windows)
+      # We tell CMake exactly where the OpenAL library is
       run: |
         mkdir build
         cd build
-        cmake -DGTAVC=ON -DLIBRW_PLATFORM=D3D9 -DCMAKE_BUILD_TYPE=Release -A Win32 ..
+        cmake -DGTAVC=ON -DLIBRW_PLATFORM=D3D9 -DCMAKE_BUILD_TYPE=Release -A Win32 -DOPENAL_INCLUDE_DIR="..\openal\include" -DOPENAL_LIBRARY="..\openal\libs\Win32\libOpenAL32.dll.a" ..
 
     - name: Compile Windows
       run: |
