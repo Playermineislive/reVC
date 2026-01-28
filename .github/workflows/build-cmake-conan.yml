@@ -19,33 +19,36 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential cmake libopenal-dev libsndfile1-dev libmpg123-dev libglfw3-dev
 
-    # --- THE PATCH SECTION (This makes it "Deluxe") ---
-    - name: Apply Deluxe Mod Limit Fixes
+    - name: Apply Deluxe Mod Fixes
       run: |
-        # 1. Rename existing lists to avoid conflicts
+        # --- FIX 1: The New Semaphore Fix (Solves your current error) ---
+        # We inject the missing macros and includes directly at the top of CdStream_posix.cpp
+        # This defines RE3_SEM_OPEN and RE3_SEM_CLOSE so the compiler stops complaining.
+        sed -i '1i #include <semaphore.h>\n#include <fcntl.h>\n#include <stdio.h>\n#define RE3_SEM_OPEN(name) sem_open(name, O_CREAT, 0644, 0)\n#define RE3_SEM_CLOSE(sem, ...) { sem_close(sem); char buf[100]; snprintf(buf, 100, __VA_ARGS__); sem_unlink(buf); }' src/core/CdStream_posix.cpp
+
+        # --- FIX 2: Rename Conflicting Enums ---
         sed -i 's/\bNUMHANDLINGS\b/NUMHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
         sed -i 's/\bNUMBIKEHANDLINGS\b/NUMBIKEHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
         sed -i 's/\bNUMFLYINGHANDLINGS\b/NUMFLYINGHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
         sed -i 's/\bNUMBOATHANDLINGS\b/NUMBOATHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
         
-        # 2. Inject the DELUXE Limits (500 Cars, 5000 Lights)
+        # --- FIX 3: Inject DELUXE Limits (500 Cars, 5000 Lights) ---
         sed -i '1i #define NUMHANDLINGS 500' src/vehicles/HandlingMgr.h
         sed -i '1i #define NUMBIKEHANDLINGS 13' src/vehicles/HandlingMgr.h
         sed -i '1i #define NUMFLYINGHANDLINGS 4' src/vehicles/HandlingMgr.h
         sed -i '1i #define NUMBOATHANDLINGS 5' src/vehicles/HandlingMgr.h
 
-        # 3. Fix the "385 Error" (Lights)
+        # --- FIX 4: Fix the "385 Error" (Lights) ---
         grep -rl "TIMEMODELSIZE" src/ | xargs sed -i 's/385/5000/g'
 
-        # 4. Fix the "Directory Error" (File Limit)
+        # --- FIX 5: Fix the "Directory Error" (File Limit) ---
         sed -i 's/entries = new DirectoryInfo\[maxEntries\];/if (maxEntries < 50000) maxEntries = 50000; entries = new DirectoryInfo[maxEntries];/' src/core/Directory.cpp
 
-    # --- BUILD SECTION ---
     - name: Compile reVC (Linux)
       run: |
         mkdir build
         cd build
-        # We enforce GL3/GLFW to ensure it runs on modern Linux/Android-Linux setups
+        # We use GL3/GLFW which is standard for Linux
         cmake -DGTAVC=ON -DLIBRW_PLATFORM=GL3 -DGL3_GFXLIB=GLFW -DCMAKE_BUILD_TYPE=Release ..
         make -j4
 
