@@ -1,4 +1,4 @@
-name: Build reVC (Linux Deluxe - Bulletproof)
+name: Build reVC (Linux Deluxe - Final Logic)
 
 on:
   workflow_dispatch:
@@ -19,71 +19,76 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential cmake libopenal-dev libsndfile1-dev libmpg123-dev libglfw3-dev
 
-    - name: Apply Fixes (Bulletproof Python)
+    - name: Apply Logic-Correct Fixes
       shell: python
       run: |
         import os
         import re
 
-        def force_prepend(filepath, text):
+        def replace_text(filepath, pattern, replacement):
+            if not os.path.exists(filepath): return
+            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+            # We use Regex to ensure we only replace exact words
+            new_content = re.sub(pattern, replacement, content, flags=re.MULTILINE)
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(new_content)
+
+        def prepend_text(filepath, text):
             if not os.path.exists(filepath): return
             with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(text + "\n" + content)
-            print(f"SUCCESS: Prepended fix to {filepath}")
 
-        def replace_text(filepath, pattern, replacement):
-            if not os.path.exists(filepath): return
-            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
-            new_content = re.sub(pattern, replacement, content, flags=re.MULTILINE)
-            with open(filepath, 'w', encoding='utf-8') as f:
-                f.write(new_content)
-            if content != new_content:
-                print(f"SUCCESS: Patched {filepath}")
+        # --- STEP 1: RENAME THE OLD ENUMS (Avoid Conflict) ---
+        # We rename the existing identifiers inside the files FIRST.
+        # This turns "NUMHANDLINGS" inside the enum into "NUMHANDLINGS_ORIGINAL"
+        handling_file = 'src/vehicles/HandlingMgr.h'
+        replace_text(handling_file, r'\bNUMHANDLINGS\b', 'NUMHANDLINGS_ORIGINAL')
+        replace_text(handling_file, r'\bNUMBIKEHANDLINGS\b', 'NUMBIKEHANDLINGS_ORIGINAL')
+        replace_text(handling_file, r'\bNUMFLYINGHANDLINGS\b', 'NUMFLYINGHANDLINGS_ORIGINAL')
+        replace_text(handling_file, r'\bNUMBOATHANDLINGS\b', 'NUMBOATHANDLINGS_ORIGINAL')
 
-        # --- FIX 1: FORCE CHANNEL LIMIT TO 64 (The "Prepend" Method) ---
-        # We add the definition to the very top. This ALWAYS wins.
-        force_prepend('src/core/CdStream.h', '#undef MAX_CD_CHANNELS\n#define MAX_CD_CHANNELS 64')
-        force_prepend('src/core/CdStream_posix.cpp', '#undef MAX_CD_CHANNELS\n#define MAX_CD_CHANNELS 64')
+        # --- STEP 2: DEFINE THE NEW LIMITS ---
+        # NOW we add the macros. Since we already renamed the old ones, these are fresh!
+        # Code asking for "NUMHANDLINGS" will now see "500".
+        prepend_text(handling_file, """
+        #define NUMHANDLINGS 500
+        #define NUMBIKEHANDLINGS 13
+        #define NUMFLYINGHANDLINGS 4
+        #define NUMBOATHANDLINGS 5
+        """)
 
-        # --- FIX 2: DELETE ALL ASSERTS (The "Mute" Method) ---
-        # We replace any line containing "assert(...)" with an empty line.
+        # --- STEP 3: FORCE 64 CHANNELS (The Crash Fix) ---
+        # We force the channel limit to 64 at the top of the Stream files
+        prepend_text('src/core/CdStream.h', '#undef MAX_CD_CHANNELS\n#define MAX_CD_CHANNELS 64')
+        prepend_text('src/core/CdStream_posix.cpp', '#undef MAX_CD_CHANNELS\n#define MAX_CD_CHANNELS 64')
+
+        # --- STEP 4: MUTE ALL CRASHES ---
+        # We replace assertions with empty comments
         replace_text('src/core/CdStream_posix.cpp', r'^\s*assert\(.*$', '// assert removed')
 
-        # --- FIX 3: DIRECTORY LIMIT (200,000) ---
+        # --- STEP 5: DIRECTORY LIMIT (200,000) ---
         replace_text('src/core/Directory.cpp', 
                      r'entries = new DirectoryInfo\[maxEntries\];', 
                      'if (maxEntries < 200000) maxEntries = 200000; entries = new DirectoryInfo[maxEntries];')
 
-        # --- FIX 4: LIGHTS LIMIT (Targeted Fix) ---
-        # Only search specific files to avoid Unicode errors
+        # --- STEP 6: LIGHTS LIMIT ---
         replace_text('src/modelinfo/TimeModelInfo.h', '385', '5000')
         replace_text('src/modelinfo/TimeModelInfo.cpp', '385', '5000')
 
-        # --- FIX 5: VEHICLE LIMITS ---
-        force_prepend('src/vehicles/HandlingMgr.h', 
-                      '#define NUMHANDLINGS 500\n#define NUMBIKEHANDLINGS 13\n#define NUMFLYINGHANDLINGS 4\n#define NUMBOATHANDLINGS 5')
-
-    - name: Apply Linux System Fixes
+    - name: Apply Linux System Headers
       run: |
-        # These standard fixes are still needed for compilation
+        # Standard Linux Fixes
         sed -i '1i #include <semaphore.h>\n#include <fcntl.h>\n#include <stdio.h>\n#define RE3_SEM_OPEN(fmt, ...) ({ char buf[128]; snprintf(buf, 128, fmt, ##__VA_ARGS__); sem_open(buf, O_CREAT, 0644, 0); })\n#define RE3_SEM_CLOSE(sem, ...) { sem_close(sem); char buf[128]; snprintf(buf, 128, __VA_ARGS__); sem_unlink(buf); }' src/core/CdStream_posix.cpp
         sed -i '1i #include <cstring>' src/skel/glfw/glfw.cpp
         sed -i 's/ControlsManager.m_NewState.buttons = (uint8\*)buttons;/memcpy(ControlsManager.m_NewState.buttons, buttons, sizeof(ControlsManager.m_NewState.buttons));/' src/skel/glfw/glfw.cpp
-        
-        # Rename conflicting enums so our new limits work
-        sed -i 's/\bNUMHANDLINGS\b/NUMHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
-        sed -i 's/\bNUMBIKEHANDLINGS\b/NUMBIKEHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
-        sed -i 's/\bNUMFLYINGHANDLINGS\b/NUMFLYINGHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
-        sed -i 's/\bNUMBOATHANDLINGS\b/NUMBOATHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
 
     - name: Compile Linux (Release)
       run: |
         mkdir build
         cd build
-        # -DNDEBUG disables asserts globally as a backup
         cmake -DGTAVC=ON -DLIBRW_PLATFORM=GL3 -DGL3_GFXLIB=GLFW -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-DNDEBUG" ..
         make -j4
 
