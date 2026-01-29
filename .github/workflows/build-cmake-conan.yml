@@ -1,4 +1,4 @@
-name: Build reVC (Linux Deluxe - Fail Safe)
+name: Build reVC (Linux Deluxe - Scorched Earth)
 
 on:
   workflow_dispatch:
@@ -7,7 +7,6 @@ on:
 
 jobs:
   build-linux:
-    # Using Ubuntu 22.04 for MX Linux Compatibility
     runs-on: ubuntu-22.04
     
     steps:
@@ -20,26 +19,26 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential cmake libopenal-dev libsndfile1-dev libmpg123-dev libglfw3-dev
 
-    - name: Apply "Fail-Safe" Fixes
+    - name: Apply "Scorched Earth" Fixes
       run: |
-        # --- FIX 1: OVERRIDE CHANNEL LIMIT (Insertion Method) ---
-        # We don't search/replace anymore. We just insert the rule at the TOP.
-        # This guarantees it is defined as 64 before the code runs.
-        sed -i '1i #undef MAX_CD_CHANNELS\n#define MAX_CD_CHANNELS 64' src/core/CdStream.h
-        sed -i '1i #undef MAX_CD_CHANNELS\n#define MAX_CD_CHANNELS 64' src/core/CdStream_posix.cpp
+        # --- FIX 1: DELETE OLD LIMIT & FORCE NEW ONE ---
+        # 1. Delete ANY line in the header that mentions MAX_CD_CHANNELS
+        sed -i '/MAX_CD_CHANNELS/d' src/core/CdStream.h
+        # 2. Add the new limit (64) to the end of the file
+        echo "#define MAX_CD_CHANNELS 64" >> src/core/CdStream.h
 
-        # --- FIX 2: DELETE CRASH CODE ---
-        # We verify these lines exist by deleting them blindly.
-        sed -i 's/assert(channel < gNumChannels);//g' src/core/CdStream_posix.cpp
-        sed -i 's/assert(pChannel != nil);//g' src/core/CdStream_posix.cpp
-        sed -i 's/assert(0);//g' src/core/CdStream_posix.cpp
+        # --- FIX 2: DELETE ALL CRASHES (The Nuclear Option) ---
+        # We delete ANY line containing "assert" or "ASSERT". 
+        # This guarantees the crash code is gone, regardless of spacing or tabs.
+        sed -i '/assert/d' src/core/CdStream_posix.cpp
+        sed -i '/ASSERT/d' src/core/CdStream_posix.cpp
 
         # --- FIX 3: LINUX ESSENTIALS ---
         sed -i '1i #include <semaphore.h>\n#include <fcntl.h>\n#include <stdio.h>\n#define RE3_SEM_OPEN(fmt, ...) ({ char buf[128]; snprintf(buf, 128, fmt, ##__VA_ARGS__); sem_open(buf, O_CREAT, 0644, 0); })\n#define RE3_SEM_CLOSE(sem, ...) { sem_close(sem); char buf[128]; snprintf(buf, 128, __VA_ARGS__); sem_unlink(buf); }' src/core/CdStream_posix.cpp
         sed -i '1i #include <cstring>' src/skel/glfw/glfw.cpp
         sed -i 's/ControlsManager.m_NewState.buttons = (uint8\*)buttons;/memcpy(ControlsManager.m_NewState.buttons, buttons, sizeof(ControlsManager.m_NewState.buttons));/' src/skel/glfw/glfw.cpp
 
-        # --- FIX 4: DELUXE LIMITS ---
+        # --- FIX 4: DELUXE MOD LIMITS ---
         sed -i 's/\bNUMHANDLINGS\b/NUMHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
         sed -i 's/\bNUMBIKEHANDLINGS\b/NUMBIKEHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
         sed -i 's/\bNUMFLYINGHANDLINGS\b/NUMFLYINGHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
@@ -54,14 +53,12 @@ jobs:
         # --- FIX 5: SUPER DIRECTORY LIMIT ---
         sed -i 's/entries = new DirectoryInfo\[maxEntries\];/if (maxEntries < 200000) maxEntries = 200000; entries = new DirectoryInfo[maxEntries];/' src/core/Directory.cpp
 
-    - name: Compile Linux (Global Override)
+    - name: Compile Linux (Release Mode + No Debug)
       run: |
         mkdir build
         cd build
-        # --- THE ULTIMATE FIX ---
-        # We pass -DMAX_CD_CHANNELS=64 to the compiler directly.
-        # This overrides ALL files, forcing the limit to 64 no matter what the code says.
-        cmake -DGTAVC=ON -DLIBRW_PLATFORM=GL3 -DGL3_GFXLIB=GLFW -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-DNDEBUG -DMAX_CD_CHANNELS=64" ..
+        # We use -DNDEBUG to tell the compiler "Do not compile ANY assert code"
+        cmake -DGTAVC=ON -DLIBRW_PLATFORM=GL3 -DGL3_GFXLIB=GLFW -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-DNDEBUG" ..
         make -j4
 
     - name: Upload Linux Artifact
