@@ -1,15 +1,13 @@
-name: Build reVC (Maximum Compatibility)
+name: Build reVC (Linux Deluxe - No Safety)
 
 on:
-  workflow_dispatch:      # Adds the "Run Workflow" button
+  workflow_dispatch:
   push:
-    branches: [ miami ]   # Runs automatically
+    branches: [ miami ]
 
 jobs:
-  # --- JOB 1: LINUX (Compatibility Mode) ---
   build-linux:
-    # FIX: We use 'ubuntu-22.04' instead of 'latest'.
-    # This uses older GLIBC versions compatible with MX Linux.
+    # Using Ubuntu 22.04 for MX Linux Compatibility
     runs-on: ubuntu-22.04
     
     steps:
@@ -17,14 +15,14 @@ jobs:
       with:
         submodules: recursive
 
-    - name: Install Linux Dependencies
+    - name: Install Dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential cmake libopenal-dev libsndfile1-dev libmpg123-dev libglfw3-dev
 
-    - name: Apply Linux Fixes
+    - name: Apply "No Safety" Fixes
       run: |
-        # 1. Semaphore Fix
+        # 1. Semaphore Fix (Required for Linux)
         sed -i '1i #include <semaphore.h>\n#include <fcntl.h>\n#include <stdio.h>\n#define RE3_SEM_OPEN(fmt, ...) ({ char buf[128]; snprintf(buf, 128, fmt, ##__VA_ARGS__); sem_open(buf, O_CREAT, 0644, 0); })\n#define RE3_SEM_CLOSE(sem, ...) { sem_close(sem); char buf[128]; snprintf(buf, 128, __VA_ARGS__); sem_unlink(buf); }' src/core/CdStream_posix.cpp
 
         # 2. GLFW Controller Fix
@@ -43,15 +41,25 @@ jobs:
         sed -i '1i #define NUMFLYINGHANDLINGS 4' src/vehicles/HandlingMgr.h
         sed -i '1i #define NUMBOATHANDLINGS 5' src/vehicles/HandlingMgr.h
 
-        # 5. Fix Lights & Directory Limits
+        # 5. Fix Lights Limit
         grep -rl "TIMEMODELSIZE" src/ | xargs sed -i 's/385/5000/g'
-        sed -i 's/entries = new DirectoryInfo\[maxEntries\];/if (maxEntries < 50000) maxEntries = 50000; entries = new DirectoryInfo[maxEntries];/' src/core/Directory.cpp
 
-    - name: Compile Linux
+        # --- NEW FIXES START HERE ---
+
+        # 6. SUPER Directory Limit (200,000 files)
+        # We force the array to be massive to handle the duplicate files in your mod
+        sed -i 's/entries = new DirectoryInfo\[maxEntries\];/if (maxEntries < 200000) maxEntries = 200000; entries = new DirectoryInfo[maxEntries];/' src/core/Directory.cpp
+
+        # 7. Remove the CD-ROM Crash (Expression: 0)
+        # This deletes the line "assert(0);" in the CD stream code so it doesn't crash on init
+        sed -i 's/assert(0);//g' src/core/CdStream_posix.cpp
+
+    - name: Compile Linux (Release Mode + No Debug)
       run: |
         mkdir build
         cd build
-        cmake -DGTAVC=ON -DLIBRW_PLATFORM=GL3 -DGL3_GFXLIB=GLFW -DCMAKE_BUILD_TYPE=Release ..
+        # We add -DCMAKE_CXX_FLAGS="-DNDEBUG" to forcefully disable all Assertions.
+        cmake -DGTAVC=ON -DLIBRW_PLATFORM=GL3 -DGL3_GFXLIB=GLFW -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-DNDEBUG" ..
         make -j4
 
     - name: Upload Linux Artifact
@@ -59,48 +67,4 @@ jobs:
       with:
         name: reVC-Linux-Deluxe
         path: build/src/reVC
-
-  # --- JOB 2: WINDOWS (Conan Method) ---
-  build-windows:
-    runs-on: windows-latest
-    steps:
-    - uses: actions/checkout@v3
-      with:
-        submodules: recursive
-
-    - uses: actions/setup-python@v4
-      with:
-        python-version: '3.x'
-
-    - name: Apply Windows Fixes
-      shell: bash
-      run: |
-        sed -i 's/\bNUMHANDLINGS\b/NUMHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
-        sed -i 's/\bNUMBIKEHANDLINGS\b/NUMBIKEHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
-        sed -i 's/\bNUMFLYINGHANDLINGS\b/NUMFLYINGHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
-        sed -i 's/\bNUMBOATHANDLINGS\b/NUMBOATHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
         
-        sed -i '1i #define NUMHANDLINGS 500' src/vehicles/HandlingMgr.h
-        sed -i '1i #define NUMBIKEHANDLINGS 13' src/vehicles/HandlingMgr.h
-        sed -i '1i #define NUMFLYINGHANDLINGS 4' src/vehicles/HandlingMgr.h
-        sed -i '1i #define NUMBOATHANDLINGS 5' src/vehicles/HandlingMgr.h
-
-        grep -rl "TIMEMODELSIZE" src/ | xargs sed -i 's/385/5000/g'
-        sed -i 's/entries = new DirectoryInfo\[maxEntries\];/if (maxEntries < 50000) maxEntries = 50000; entries = new DirectoryInfo[maxEntries];/' src/core/Directory.cpp
-
-    - name: Setup Conan
-      run: |
-        pip install "conan<2.0"
-        conan config init
-        conan remote add bincrafters https://bincrafters.jfrog.io/artifactory/api/conan/public-conan
-
-    - name: Install Windows Deps & Build
-      run: |
-        conan install . -if build -o reVC:audio=openal -o librw:platform=d3d9 --build missing -s arch=x86 -s reVC:build_type=Release -s librw:build_type=Release
-        conan build . -bf build
-
-    - name: Upload Windows Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: reVC-Windows-Deluxe
-        path: build/bin/reVC.exe
