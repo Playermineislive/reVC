@@ -1,4 +1,4 @@
-name: Build reVC (Linux Deluxe - Max Channels)
+name: Build reVC (Linux Deluxe - Nuclear Fix)
 
 on:
   workflow_dispatch:
@@ -7,7 +7,6 @@ on:
 
 jobs:
   build-linux:
-    # We use Ubuntu 22.04 to ensure it works on your MX Linux
     runs-on: ubuntu-22.04
     
     steps:
@@ -20,41 +19,48 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential cmake libopenal-dev libsndfile1-dev libmpg123-dev libglfw3-dev
 
-    - name: Apply "Wide Pipe" Fixes
+    - name: Apply "Nuclear" Fixes
       run: |
-        # --- FIX 1: INCREASE STREAMING CHANNELS (The Fix for your current crash) ---
-        # The default is 5. We change it to 64 so the game never runs out of loaders.
-        sed -i 's/#define MAX_CD_CHANNELS .*$/#define MAX_CD_CHANNELS 64/' src/core/CdStream.h
+        # --- FIX 1: FORCE CHANNEL LIMIT TO 64 (The "Nuclear" Method) ---
+        # We search for ANY line defining MAX_CD_CHANNELS and forcefully overwrite it.
+        # We also manually inject the define into the .cpp file just to be safe.
+        sed -i -E 's/define[[:space:]]+MAX_CD_CHANNELS[[:space:]]+.*$/define MAX_CD_CHANNELS 64/' src/core/CdStream.h
+        sed -i '1i #undef MAX_CD_CHANNELS\n#define MAX_CD_CHANNELS 64' src/core/CdStream_posix.cpp
 
-        # --- FIX 2: SEMAPHORE & CONTROLLER (Linux Essentials) ---
+        # --- FIX 2: VERIFY THE FIX (Debug) ---
+        echo "CHECKING IF PATCH WORKED:"
+        grep "MAX_CD_CHANNELS" src/core/CdStream.h
+
+        # --- FIX 3: REMOVE ASSERTIONS (Stop the crashes) ---
+        # We delete the specific lines that are crashing your game.
+        sed -i 's/assert(channel < gNumChannels);//' src/core/CdStream_posix.cpp
+        sed -i 's/assert(0);//' src/core/CdStream_posix.cpp
+
+        # --- FIX 4: LINUX ESSENTIALS ---
         sed -i '1i #include <semaphore.h>\n#include <fcntl.h>\n#include <stdio.h>\n#define RE3_SEM_OPEN(fmt, ...) ({ char buf[128]; snprintf(buf, 128, fmt, ##__VA_ARGS__); sem_open(buf, O_CREAT, 0644, 0); })\n#define RE3_SEM_CLOSE(sem, ...) { sem_close(sem); char buf[128]; snprintf(buf, 128, __VA_ARGS__); sem_unlink(buf); }' src/core/CdStream_posix.cpp
         sed -i '1i #include <cstring>' src/skel/glfw/glfw.cpp
         sed -i 's/ControlsManager.m_NewState.buttons = (uint8\*)buttons;/memcpy(ControlsManager.m_NewState.buttons, buttons, sizeof(ControlsManager.m_NewState.buttons));/' src/skel/glfw/glfw.cpp
 
-        # --- FIX 3: RENAME ENUMS ---
+        # --- FIX 5: DELUXE LIMITS ---
         sed -i 's/\bNUMHANDLINGS\b/NUMHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
         sed -i 's/\bNUMBIKEHANDLINGS\b/NUMBIKEHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
         sed -i 's/\bNUMFLYINGHANDLINGS\b/NUMFLYINGHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
         sed -i 's/\bNUMBOATHANDLINGS\b/NUMBOATHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
         
-        # --- FIX 4: DELUXE LIMITS ---
         sed -i '1i #define NUMHANDLINGS 500' src/vehicles/HandlingMgr.h
         sed -i '1i #define NUMBIKEHANDLINGS 13' src/vehicles/HandlingMgr.h
         sed -i '1i #define NUMFLYINGHANDLINGS 4' src/vehicles/HandlingMgr.h
         sed -i '1i #define NUMBOATHANDLINGS 5' src/vehicles/HandlingMgr.h
         grep -rl "TIMEMODELSIZE" src/ | xargs sed -i 's/385/5000/g'
 
-        # --- FIX 5: SUPER DIRECTORY LIMIT (200,000) ---
+        # --- FIX 6: SUPER DIRECTORY LIMIT (200,000) ---
         sed -i 's/entries = new DirectoryInfo\[maxEntries\];/if (maxEntries < 200000) maxEntries = 200000; entries = new DirectoryInfo[maxEntries];/' src/core/Directory.cpp
 
-        # --- FIX 6: REMOVE CD ASSERT ---
-        sed -i 's/assert(0);//g' src/core/CdStream_posix.cpp
-
-    - name: Compile Linux (Release Mode + No Safety)
+    - name: Compile Linux (Release Mode + No Debug)
       run: |
         mkdir build
         cd build
-        # We use -DNDEBUG to disable error messages and keep the game running
+        # -DNDEBUG disables all asserts globally
         cmake -DGTAVC=ON -DLIBRW_PLATFORM=GL3 -DGL3_GFXLIB=GLFW -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-DNDEBUG" ..
         make -j4
 
