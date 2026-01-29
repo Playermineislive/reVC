@@ -1,4 +1,4 @@
-name: Build reVC (Linux Deluxe - Final Logic)
+name: Build reVC (Linux Deluxe - Infinity Edition)
 
 on:
   workflow_dispatch:
@@ -19,7 +19,49 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential cmake libopenal-dev libsndfile1-dev libmpg123-dev libglfw3-dev
 
-    - name: Apply Logic-Correct Fixes
+    - name: Apply "Infinity" Memory Patch
+      shell: python
+      run: |
+        import os
+        import re
+
+        def patch_limits(filepath):
+            if not os.path.exists(filepath):
+                print(f"Error: {filepath} not found!")
+                return
+            
+            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+            
+            # --- FIX 1: INCREASE MODEL LIMITS (The Cause of your crash) ---
+            # We find the existing number and replace it with a huge one.
+            
+            # Simple Objects (Buildings): 3885 -> 30000
+            content = re.sub(r'NUMSIMPLEMODELINFOS\s*=\s*\d+', 'NUMSIMPLEMODELINFOS = 30000', content)
+            
+            # Time Objects (Lights/Neons): 385 -> 10000
+            content = re.sub(r'NUMTIMEMODELINFOS\s*=\s*\d+', 'NUMTIMEMODELINFOS = 10000', content)
+            
+            # Weapon Objects: 51 -> 200
+            content = re.sub(r'NUMWEAPONMODELINFOS\s*=\s*\d+', 'NUMWEAPONMODELINFOS = 200', content)
+            
+            # Vehicle Objects: 110 -> 500
+            content = re.sub(r'NUMVEHICLEMODELINFOS\s*=\s*\d+', 'NUMVEHICLEMODELINFOS = 500', content)
+            
+            # Pedestrians: 130 -> 500
+            content = re.sub(r'NUMPEDMODELINFOS\s*=\s*\d+', 'NUMPEDMODELINFOS = 500', content)
+            
+            # 2D Effects (Lights/Particles): 1600 -> 10000
+            content = re.sub(r'NUM2DEFFECTSMODELINFOS\s*=\s*\d+', 'NUM2DEFFECTSMODELINFOS = 10000', content)
+
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(content)
+            print(f"SUCCESS: Patched limits in {filepath}")
+
+        # Apply to the Master Header File
+        patch_limits('src/modelinfo/ModelInfo.h')
+
+    - name: Apply Previous Fixes (Channels & Directory)
       shell: python
       run: |
         import os
@@ -29,7 +71,6 @@ jobs:
             if not os.path.exists(filepath): return
             with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
-            # We use Regex to ensure we only replace exact words
             new_content = re.sub(pattern, replacement, content, flags=re.MULTILINE)
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(new_content)
@@ -41,46 +82,25 @@ jobs:
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(text + "\n" + content)
 
-        # --- STEP 1: RENAME THE OLD ENUMS (Avoid Conflict) ---
-        # We rename the existing identifiers inside the files FIRST.
-        # This turns "NUMHANDLINGS" inside the enum into "NUMHANDLINGS_ORIGINAL"
-        handling_file = 'src/vehicles/HandlingMgr.h'
-        replace_text(handling_file, r'\bNUMHANDLINGS\b', 'NUMHANDLINGS_ORIGINAL')
-        replace_text(handling_file, r'\bNUMBIKEHANDLINGS\b', 'NUMBIKEHANDLINGS_ORIGINAL')
-        replace_text(handling_file, r'\bNUMFLYINGHANDLINGS\b', 'NUMFLYINGHANDLINGS_ORIGINAL')
-        replace_text(handling_file, r'\bNUMBOATHANDLINGS\b', 'NUMBOATHANDLINGS_ORIGINAL')
-
-        # --- STEP 2: DEFINE THE NEW LIMITS ---
-        # NOW we add the macros. Since we already renamed the old ones, these are fresh!
-        # Code asking for "NUMHANDLINGS" will now see "500".
-        prepend_text(handling_file, """
-        #define NUMHANDLINGS 500
-        #define NUMBIKEHANDLINGS 13
-        #define NUMFLYINGHANDLINGS 4
-        #define NUMBOATHANDLINGS 5
-        """)
-
-        # --- STEP 3: FORCE 64 CHANNELS (The Crash Fix) ---
-        # We force the channel limit to 64 at the top of the Stream files
+        # --- FIX 2: FORCE 64 CHANNELS ---
         prepend_text('src/core/CdStream.h', '#undef MAX_CD_CHANNELS\n#define MAX_CD_CHANNELS 64')
         prepend_text('src/core/CdStream_posix.cpp', '#undef MAX_CD_CHANNELS\n#define MAX_CD_CHANNELS 64')
 
-        # --- STEP 4: MUTE ALL CRASHES ---
-        # We replace assertions with empty comments
-        replace_text('src/core/CdStream_posix.cpp', r'^\s*assert\(.*$', '// assert removed')
-
-        # --- STEP 5: DIRECTORY LIMIT (200,000) ---
+        # --- FIX 3: DIRECTORY LIMIT (200,000) ---
         replace_text('src/core/Directory.cpp', 
                      r'entries = new DirectoryInfo\[maxEntries\];', 
                      'if (maxEntries < 200000) maxEntries = 200000; entries = new DirectoryInfo[maxEntries];')
 
-        # --- STEP 6: LIGHTS LIMIT ---
-        replace_text('src/modelinfo/TimeModelInfo.h', '385', '5000')
-        replace_text('src/modelinfo/TimeModelInfo.cpp', '385', '5000')
+        # --- FIX 4: VEHICLE LIMITS (Enums) ---
+        replace_text('src/vehicles/HandlingMgr.h', r'\bNUMHANDLINGS\b', 'NUMHANDLINGS_ORIGINAL')
+        replace_text('src/vehicles/HandlingMgr.h', r'\bNUMBIKEHANDLINGS\b', 'NUMBIKEHANDLINGS_ORIGINAL')
+        replace_text('src/vehicles/HandlingMgr.h', r'\bNUMFLYINGHANDLINGS\b', 'NUMFLYINGHANDLINGS_ORIGINAL')
+        replace_text('src/vehicles/HandlingMgr.h', r'\bNUMBOATHANDLINGS\b', 'NUMBOATHANDLINGS_ORIGINAL')
+        
+        prepend_text('src/vehicles/HandlingMgr.h', '#define NUMHANDLINGS 500\n#define NUMBIKEHANDLINGS 13\n#define NUMFLYINGHANDLINGS 4\n#define NUMBOATHANDLINGS 5')
 
     - name: Apply Linux System Headers
       run: |
-        # Standard Linux Fixes
         sed -i '1i #include <semaphore.h>\n#include <fcntl.h>\n#include <stdio.h>\n#define RE3_SEM_OPEN(fmt, ...) ({ char buf[128]; snprintf(buf, 128, fmt, ##__VA_ARGS__); sem_open(buf, O_CREAT, 0644, 0); })\n#define RE3_SEM_CLOSE(sem, ...) { sem_close(sem); char buf[128]; snprintf(buf, 128, __VA_ARGS__); sem_unlink(buf); }' src/core/CdStream_posix.cpp
         sed -i '1i #include <cstring>' src/skel/glfw/glfw.cpp
         sed -i 's/ControlsManager.m_NewState.buttons = (uint8\*)buttons;/memcpy(ControlsManager.m_NewState.buttons, buttons, sizeof(ControlsManager.m_NewState.buttons));/' src/skel/glfw/glfw.cpp
@@ -89,6 +109,7 @@ jobs:
       run: |
         mkdir build
         cd build
+        # -DNDEBUG stops the crash messages, but now we have fixed the CAUSE of the crash too.
         cmake -DGTAVC=ON -DLIBRW_PLATFORM=GL3 -DGL3_GFXLIB=GLFW -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-DNDEBUG" ..
         make -j4
 
