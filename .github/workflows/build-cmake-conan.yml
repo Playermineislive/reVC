@@ -1,4 +1,4 @@
-name: Build reVC (Linux Deluxe - No Safety)
+name: Build reVC (Linux Deluxe - Max Channels)
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   build-linux:
-    # Using Ubuntu 22.04 for MX Linux Compatibility
+    # Still using Ubuntu 22.04 for MX Linux compatibility
     runs-on: ubuntu-22.04
     
     steps:
@@ -20,45 +20,41 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential cmake libopenal-dev libsndfile1-dev libmpg123-dev libglfw3-dev
 
-    - name: Apply "No Safety" Fixes
+    - name: Apply "Wide Pipe" Fixes
       run: |
-        # 1. Semaphore Fix (Required for Linux)
-        sed -i '1i #include <semaphore.h>\n#include <fcntl.h>\n#include <stdio.h>\n#define RE3_SEM_OPEN(fmt, ...) ({ char buf[128]; snprintf(buf, 128, fmt, ##__VA_ARGS__); sem_open(buf, O_CREAT, 0644, 0); })\n#define RE3_SEM_CLOSE(sem, ...) { sem_close(sem); char buf[128]; snprintf(buf, 128, __VA_ARGS__); sem_unlink(buf); }' src/core/CdStream_posix.cpp
+        # --- FIX 1: INCREASE STREAMING CHANNELS (The Fix for your current crash) ---
+        # The default is 5. We change it to 64 so the game never runs out of loaders.
+        sed -i 's/#define MAX_CD_CHANNELS .*$/#define MAX_CD_CHANNELS 64/' src/core/CdStream.h
 
-        # 2. GLFW Controller Fix
+        # --- FIX 2: SEMAPHORE & CONTROLLER (Linux Essentials) ---
+        sed -i '1i #include <semaphore.h>\n#include <fcntl.h>\n#include <stdio.h>\n#define RE3_SEM_OPEN(fmt, ...) ({ char buf[128]; snprintf(buf, 128, fmt, ##__VA_ARGS__); sem_open(buf, O_CREAT, 0644, 0); })\n#define RE3_SEM_CLOSE(sem, ...) { sem_close(sem); char buf[128]; snprintf(buf, 128, __VA_ARGS__); sem_unlink(buf); }' src/core/CdStream_posix.cpp
         sed -i '1i #include <cstring>' src/skel/glfw/glfw.cpp
         sed -i 's/ControlsManager.m_NewState.buttons = (uint8\*)buttons;/memcpy(ControlsManager.m_NewState.buttons, buttons, sizeof(ControlsManager.m_NewState.buttons));/' src/skel/glfw/glfw.cpp
 
-        # 3. Rename Conflicting Enums
+        # --- FIX 3: RENAME ENUMS ---
         sed -i 's/\bNUMHANDLINGS\b/NUMHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
         sed -i 's/\bNUMBIKEHANDLINGS\b/NUMBIKEHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
         sed -i 's/\bNUMFLYINGHANDLINGS\b/NUMFLYINGHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
         sed -i 's/\bNUMBOATHANDLINGS\b/NUMBOATHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
         
-        # 4. Inject DELUXE Limits
+        # --- FIX 4: DELUXE LIMITS ---
         sed -i '1i #define NUMHANDLINGS 500' src/vehicles/HandlingMgr.h
         sed -i '1i #define NUMBIKEHANDLINGS 13' src/vehicles/HandlingMgr.h
         sed -i '1i #define NUMFLYINGHANDLINGS 4' src/vehicles/HandlingMgr.h
         sed -i '1i #define NUMBOATHANDLINGS 5' src/vehicles/HandlingMgr.h
-
-        # 5. Fix Lights Limit
         grep -rl "TIMEMODELSIZE" src/ | xargs sed -i 's/385/5000/g'
 
-        # --- NEW FIXES START HERE ---
-
-        # 6. SUPER Directory Limit (200,000 files)
-        # We force the array to be massive to handle the duplicate files in your mod
+        # --- FIX 5: SUPER DIRECTORY LIMIT (200,000) ---
         sed -i 's/entries = new DirectoryInfo\[maxEntries\];/if (maxEntries < 200000) maxEntries = 200000; entries = new DirectoryInfo[maxEntries];/' src/core/Directory.cpp
 
-        # 7. Remove the CD-ROM Crash (Expression: 0)
-        # This deletes the line "assert(0);" in the CD stream code so it doesn't crash on init
+        # --- FIX 6: REMOVE CD ASSERT ---
         sed -i 's/assert(0);//g' src/core/CdStream_posix.cpp
 
-    - name: Compile Linux (Release Mode + No Debug)
+    - name: Compile Linux (Release Mode + No Safety)
       run: |
         mkdir build
         cd build
-        # We add -DCMAKE_CXX_FLAGS="-DNDEBUG" to forcefully disable all Assertions.
+        # Keeping -DNDEBUG to ignore minor errors
         cmake -DGTAVC=ON -DLIBRW_PLATFORM=GL3 -DGL3_GFXLIB=GLFW -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-DNDEBUG" ..
         make -j4
 
@@ -67,4 +63,3 @@ jobs:
       with:
         name: reVC-Linux-Deluxe
         path: build/src/reVC
-        
