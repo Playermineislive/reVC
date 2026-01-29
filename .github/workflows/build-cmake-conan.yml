@@ -1,4 +1,4 @@
-name: Build reVC (Linux + Windows Deluxe)
+name: Build reVC (Maximum Compatibility)
 
 on:
   workflow_dispatch:      # Adds the "Run Workflow" button
@@ -6,9 +6,12 @@ on:
     branches: [ miami ]   # Runs automatically
 
 jobs:
-  # --- JOB 1: LINUX DELUXE (Standard) ---
+  # --- JOB 1: LINUX (Compatibility Mode) ---
   build-linux:
-    runs-on: ubuntu-latest
+    # FIX: We use 'ubuntu-22.04' instead of 'latest'.
+    # This uses older GLIBC versions compatible with MX Linux.
+    runs-on: ubuntu-22.04
+    
     steps:
     - uses: actions/checkout@v3
       with:
@@ -19,12 +22,12 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential cmake libopenal-dev libsndfile1-dev libmpg123-dev libglfw3-dev
 
-    - name: Apply Linux Deluxe Fixes
+    - name: Apply Linux Fixes
       run: |
-        # 1. Semaphore Fix (Specific to Linux)
+        # 1. Semaphore Fix
         sed -i '1i #include <semaphore.h>\n#include <fcntl.h>\n#include <stdio.h>\n#define RE3_SEM_OPEN(fmt, ...) ({ char buf[128]; snprintf(buf, 128, fmt, ##__VA_ARGS__); sem_open(buf, O_CREAT, 0644, 0); })\n#define RE3_SEM_CLOSE(sem, ...) { sem_close(sem); char buf[128]; snprintf(buf, 128, __VA_ARGS__); sem_unlink(buf); }' src/core/CdStream_posix.cpp
 
-        # 2. GLFW Controller Fix (Specific to Linux)
+        # 2. GLFW Controller Fix
         sed -i '1i #include <cstring>' src/skel/glfw/glfw.cpp
         sed -i 's/ControlsManager.m_NewState.buttons = (uint8\*)buttons;/memcpy(ControlsManager.m_NewState.buttons, buttons, sizeof(ControlsManager.m_NewState.buttons));/' src/skel/glfw/glfw.cpp
 
@@ -34,7 +37,7 @@ jobs:
         sed -i 's/\bNUMFLYINGHANDLINGS\b/NUMFLYINGHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
         sed -i 's/\bNUMBOATHANDLINGS\b/NUMBOATHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
         
-        # 4. Inject DELUXE Limits (500 Cars, 5000 Lights)
+        # 4. Inject DELUXE Limits
         sed -i '1i #define NUMHANDLINGS 500' src/vehicles/HandlingMgr.h
         sed -i '1i #define NUMBIKEHANDLINGS 13' src/vehicles/HandlingMgr.h
         sed -i '1i #define NUMFLYINGHANDLINGS 4' src/vehicles/HandlingMgr.h
@@ -57,7 +60,7 @@ jobs:
         name: reVC-Linux-Deluxe
         path: build/src/reVC
 
-  # --- JOB 2: WINDOWS DELUXE (With OpenAL Fix) ---
+  # --- JOB 2: WINDOWS (Conan Method) ---
   build-windows:
     runs-on: windows-latest
     steps:
@@ -65,47 +68,39 @@ jobs:
       with:
         submodules: recursive
 
-    - name: Apply Windows Deluxe Fixes
+    - uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+
+    - name: Apply Windows Fixes
       shell: bash
       run: |
-        # 1. Rename Conflicting Enums
         sed -i 's/\bNUMHANDLINGS\b/NUMHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
         sed -i 's/\bNUMBIKEHANDLINGS\b/NUMBIKEHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
         sed -i 's/\bNUMFLYINGHANDLINGS\b/NUMFLYINGHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
         sed -i 's/\bNUMBOATHANDLINGS\b/NUMBOATHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
         
-        # 2. Inject DELUXE Limits (500 Cars, 5000 Lights)
         sed -i '1i #define NUMHANDLINGS 500' src/vehicles/HandlingMgr.h
         sed -i '1i #define NUMBIKEHANDLINGS 13' src/vehicles/HandlingMgr.h
         sed -i '1i #define NUMFLYINGHANDLINGS 4' src/vehicles/HandlingMgr.h
         sed -i '1i #define NUMBOATHANDLINGS 5' src/vehicles/HandlingMgr.h
 
-        # 3. Fix Lights & Directory Limits
         grep -rl "TIMEMODELSIZE" src/ | xargs sed -i 's/385/5000/g'
         sed -i 's/entries = new DirectoryInfo\[maxEntries\];/if (maxEntries < 50000) maxEntries = 50000; entries = new DirectoryInfo[maxEntries];/' src/core/Directory.cpp
 
-    # --- NEW STEP: Install OpenAL for Windows ---
-    - name: Install OpenAL (Windows)
-      shell: powershell
+    - name: Setup Conan
       run: |
-        Invoke-WebRequest -Uri "https://openal-soft.org/openal-binaries/openal-soft-1.23.1-bin.zip" -OutFile "openal.zip"
-        Expand-Archive openal.zip -DestinationPath .
-        Move-Item -Path "openal-soft-1.23.1-bin" -Destination "openal"
+        pip install "conan<2.0"
+        conan config init
+        conan remote add bincrafters https://bincrafters.jfrog.io/artifactory/api/conan/public-conan
 
-    - name: Configure CMake (Windows)
-      # We tell CMake exactly where the OpenAL library is
+    - name: Install Windows Deps & Build
       run: |
-        mkdir build
-        cd build
-        cmake -DGTAVC=ON -DLIBRW_PLATFORM=D3D9 -DCMAKE_BUILD_TYPE=Release -A Win32 -DOPENAL_INCLUDE_DIR="..\openal\include" -DOPENAL_LIBRARY="..\openal\libs\Win32\libOpenAL32.dll.a" ..
-
-    - name: Compile Windows
-      run: |
-        cmake --build build --config Release --parallel 4
+        conan install . -if build -o reVC:audio=openal -o librw:platform=d3d9 --build missing -s arch=x86 -s reVC:build_type=Release -s librw:build_type=Release
+        conan build . -bf build
 
     - name: Upload Windows Artifact
       uses: actions/upload-artifact@v4
       with:
         name: reVC-Windows-Deluxe
-        path: build/src/Release/reVC.exe
-        
+        path: build/bin/reVC.exe
