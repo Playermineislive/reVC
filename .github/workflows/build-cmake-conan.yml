@@ -7,7 +7,7 @@ on:
 
 jobs:
   build-linux:
-    # Still using Ubuntu 22.04 for MX Linux compatibility
+    # We use Ubuntu 22.04 to ensure it works on your MX Linux
     runs-on: ubuntu-22.04
     
     steps:
@@ -54,7 +54,7 @@ jobs:
       run: |
         mkdir build
         cd build
-        # Keeping -DNDEBUG to ignore minor errors
+        # We use -DNDEBUG to disable error messages and keep the game running
         cmake -DGTAVC=ON -DLIBRW_PLATFORM=GL3 -DGL3_GFXLIB=GLFW -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-DNDEBUG" ..
         make -j4
 
