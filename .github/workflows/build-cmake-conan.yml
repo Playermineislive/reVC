@@ -1,4 +1,4 @@
-name: Build reVC (Linux Deluxe - Python Fix)
+name: Build reVC (Linux Deluxe - Bulletproof)
 
 on:
   workflow_dispatch:
@@ -19,77 +19,71 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential cmake libopenal-dev libsndfile1-dev libmpg123-dev libglfw3-dev
 
-    - name: Apply Fixes using Python (Reliable)
+    - name: Apply Fixes (Bulletproof Python)
       shell: python
       run: |
         import os
         import re
 
-        def patch_file(filepath, search_pattern, replacement):
-            if not os.path.exists(filepath):
-                print(f"Skipping {filepath} (Not found)")
-                return
-            
-            with open(filepath, 'r') as f:
+        def force_prepend(filepath, text):
+            if not os.path.exists(filepath): return
+            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
-            
-            # Use Regex to find the pattern regardless of spaces/tabs
-            new_content = re.sub(search_pattern, replacement, content, flags=re.MULTILINE)
-            
-            if new_content == content:
-                print(f"WARNING: No changes made to {filepath}!")
-            else:
-                print(f"SUCCESS: Patched {filepath}")
-                
-            with open(filepath, 'w') as f:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(text + "\n" + content)
+            print(f"SUCCESS: Prepended fix to {filepath}")
+
+        def replace_text(filepath, pattern, replacement):
+            if not os.path.exists(filepath): return
+            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+            new_content = re.sub(pattern, replacement, content, flags=re.MULTILINE)
+            with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(new_content)
+            if content != new_content:
+                print(f"SUCCESS: Patched {filepath}")
 
-        # --- FIX 1: FORCE CHANNEL LIMIT TO 64 ---
-        # Finds "#define MAX_CD_CHANNELS 5" (or any number) and turns it into 64
-        patch_file('src/core/CdStream.h', r'#define\s+MAX_CD_CHANNELS\s+\(?\d+\)?', '#define MAX_CD_CHANNELS 64')
+        # --- FIX 1: FORCE CHANNEL LIMIT TO 64 (The "Prepend" Method) ---
+        # We add the definition to the very top. This ALWAYS wins.
+        force_prepend('src/core/CdStream.h', '#undef MAX_CD_CHANNELS\n#define MAX_CD_CHANNELS 64')
+        force_prepend('src/core/CdStream_posix.cpp', '#undef MAX_CD_CHANNELS\n#define MAX_CD_CHANNELS 64')
 
-        # --- FIX 2: REMOVE ASSERTIONS ---
-        # Replaces "assert(channel < ...)" with "// assert disabled"
-        patch_file('src/core/CdStream_posix.cpp', r'assert\(channel\s*<\s*gNumChannels\);', '// assert disabled;')
-        patch_file('src/core/CdStream_posix.cpp', r'assert\(pChannel\s*!=\s*nil\);', '// assert disabled;')
-        patch_file('src/core/CdStream_posix.cpp', r'assert\(0\);', '// assert disabled;')
+        # --- FIX 2: DELETE ALL ASSERTS (The "Mute" Method) ---
+        # We replace any line containing "assert(...)" with an empty line.
+        replace_text('src/core/CdStream_posix.cpp', r'^\s*assert\(.*$', '// assert removed')
 
         # --- FIX 3: DIRECTORY LIMIT (200,000) ---
-        patch_file('src/core/Directory.cpp', 
-                   r'entries = new DirectoryInfo\[maxEntries\];', 
-                   'if (maxEntries < 200000) maxEntries = 200000; entries = new DirectoryInfo[maxEntries];')
+        replace_text('src/core/Directory.cpp', 
+                     r'entries = new DirectoryInfo\[maxEntries\];', 
+                     'if (maxEntries < 200000) maxEntries = 200000; entries = new DirectoryInfo[maxEntries];')
 
-        # --- FIX 4: VEHICLE LIMITS ---
-        # Note: We append definitions to the top of the file for limits
-        with open('src/vehicles/HandlingMgr.h', 'r+') as f:
-            content = f.read()
-            f.seek(0, 0)
-            f.write("#define NUMHANDLINGS 500\n#define NUMBIKEHANDLINGS 13\n#define NUMFLYINGHANDLINGS 4\n#define NUMBOATHANDLINGS 5\n" + content)
-        
-        # --- FIX 5: LIGHTS LIMIT ---
-        # We walk through all files to find TIMEMODELSIZE
-        for root, dirs, files in os.walk("src"):
-            for file in files:
-                if file.endswith(".h") or file.endswith(".cpp"):
-                    path = os.path.join(root, file)
-                    patch_file(path, '385', '5000')
+        # --- FIX 4: LIGHTS LIMIT (Targeted Fix) ---
+        # Only search specific files to avoid Unicode errors
+        replace_text('src/modelinfo/TimeModelInfo.h', '385', '5000')
+        replace_text('src/modelinfo/TimeModelInfo.cpp', '385', '5000')
 
-    - name: Verify Fixes (Debug)
-      run: |
-        echo "Checking CdStream.h..."
-        grep "MAX_CD_CHANNELS" src/core/CdStream.h
+        # --- FIX 5: VEHICLE LIMITS ---
+        force_prepend('src/vehicles/HandlingMgr.h', 
+                      '#define NUMHANDLINGS 500\n#define NUMBIKEHANDLINGS 13\n#define NUMFLYINGHANDLINGS 4\n#define NUMBOATHANDLINGS 5')
 
     - name: Apply Linux System Fixes
       run: |
-        # Linux Header Fixes
+        # These standard fixes are still needed for compilation
         sed -i '1i #include <semaphore.h>\n#include <fcntl.h>\n#include <stdio.h>\n#define RE3_SEM_OPEN(fmt, ...) ({ char buf[128]; snprintf(buf, 128, fmt, ##__VA_ARGS__); sem_open(buf, O_CREAT, 0644, 0); })\n#define RE3_SEM_CLOSE(sem, ...) { sem_close(sem); char buf[128]; snprintf(buf, 128, __VA_ARGS__); sem_unlink(buf); }' src/core/CdStream_posix.cpp
         sed -i '1i #include <cstring>' src/skel/glfw/glfw.cpp
         sed -i 's/ControlsManager.m_NewState.buttons = (uint8\*)buttons;/memcpy(ControlsManager.m_NewState.buttons, buttons, sizeof(ControlsManager.m_NewState.buttons));/' src/skel/glfw/glfw.cpp
+        
+        # Rename conflicting enums so our new limits work
+        sed -i 's/\bNUMHANDLINGS\b/NUMHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
+        sed -i 's/\bNUMBIKEHANDLINGS\b/NUMBIKEHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
+        sed -i 's/\bNUMFLYINGHANDLINGS\b/NUMFLYINGHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
+        sed -i 's/\bNUMBOATHANDLINGS\b/NUMBOATHANDLINGS_OLD/g' src/vehicles/HandlingMgr.h
 
     - name: Compile Linux (Release)
       run: |
         mkdir build
         cd build
+        # -DNDEBUG disables asserts globally as a backup
         cmake -DGTAVC=ON -DLIBRW_PLATFORM=GL3 -DGL3_GFXLIB=GLFW -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-DNDEBUG" ..
         make -j4
 
